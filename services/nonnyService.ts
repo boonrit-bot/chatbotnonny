@@ -1,4 +1,4 @@
-import { NonnyResponse } from '../types';
+import { NonnyResponse, NonnyAdminAction } from '../types';
 import { SUGGESTION_GROUPS, NONNY_NAME } from '../constants';
 import { GoogleGenAI } from '@google/genai';
 
@@ -23,10 +23,10 @@ export const getNonnyResponse = async (userMessage: string): Promise<NonnyRespon
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const lowerCaseMessage = userMessage.toLowerCase();
-  let botResponse: string;
+  let botResponse: string | null = null; // Initialize as null to explicitly check if it has been set
 
-  const defaultAdminAction = {
-    status: "No Action" as const,
+  let finalAdminAction: NonnyAdminAction = {
+    status: "No Action", // Default status
     sql: null,
     comparison: null,
     retrain_json: null,
@@ -49,39 +49,67 @@ export const getNonnyResponse = async (userMessage: string): Promise<NonnyRespon
   } else if (lowerCaseMessage.includes("ติดต่อ")) {
     botResponse = `คุณสามารถติดต่อสอบถามเพิ่มเติมได้ที่งานทะเบียน อาคารปฏิพัทธ์ ชั้น 1.`;
   } else {
-    // --- Gemini API Fallback for general queries ---
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview", // Using the specified model for general chat
-        contents: { parts: [{ text: userMessage }] },
-        config: {
-          systemInstruction: "คุณคือนนท์นี่ เจ้าหน้าที่แชทบอทอัจฉริยะและ Database & Training Manager ประจำวิทยาลัยอาชีวศึกษาภูเก็ต. คุณสุภาพ เป็นกันเอง มีความเป็นมืออาชีพ และทำงานบนความถูกต้องของข้อมูล 100%. ตอบคำถามเพียง 1 ประโยคเท่านั้น ห้ามขยายความหรืออธิบายยาวเด็ดขาด.",
-          maxOutputTokens: 50, // Enforce brevity
-          thinkingConfig: { thinkingBudget: 25 }, // Reserve tokens for thinking
-        },
-      });
-      botResponse = response.text || "ขออภัย ไม่เข้าใจคำถามของคุณ. กรุณาลองใหม่อีกครั้ง.";
-      // Ensure the response is a single sentence if Gemini returns more.
-      // This is a post-processing step to strictly enforce the rule, in case Gemini deviates.
-      const sentences = botResponse.split(/[.!?]\s*/);
-      botResponse = sentences[0].trim();
-      // Fixed: Reference botResponse instead of botResponseData.text
-      if (sentences.length > 1 && botResponse.length < (response.text?.length || 0)) {
-        botResponse += "."; // Add back a period if multiple sentences were split.
-      }
-      if (botResponse.length === 0) { // Fallback if splitting leaves an empty string
-        botResponse = "ขออภัย ไม่เข้าใจคำถามของคุณ. กรุณาลองใหม่อีกครั้ง.";
-      }
+    // --- New Admin Review Logic (runs after specific business logic) ---
+    const adminKeywords = ["อัปเดตข้อมูล", "ข้อมูลใหม่", "แก้ไข", "เปลี่ยนข้อมูล", "เพิ่มข้อมูล", "ไม่ถูกต้อง", "อยากให้แก้"];
+    const needsAdminReview = adminKeywords.some(keyword => lowerCaseMessage.includes(keyword));
 
-    } catch (error) {
-      console.error('Error calling Gemini API:', error);
-      botResponse = `ขออภัย เกิดข้อผิดพลาดทางเทคนิค. กรุณาติดต่อ ${NONNY_NAME} อีกครั้งภายหลัง.`;
+    if (needsAdminReview) {
+      botResponse = "ขอบคุณสำหรับข้อมูลค่ะ/ครับ นนท์นี่จะนำข้อมูลนี้ไปตรวจสอบและอัปเดตให้นะคะ/ครับ";
+      finalAdminAction = {
+        status: "Update Required",
+        sql: null, // No SQL generation in frontend context
+        comparison: null,
+        retrain_json: JSON.stringify({
+          user_input: userMessage,
+          detected_intent: "admin_review",
+          timestamp: new Date().toISOString(),
+          // In a full implementation, more context or extracted data would be added here.
+        }),
+      };
+    }
+    // --- New prphuketvc.ac.th Data Source Rule (runs after admin review logic) ---
+    else if (lowerCaseMessage.includes("prphuketvc.ac.th") || lowerCaseMessage.includes("เว็บไซต์วิทยาลัย")) {
+      botResponse = "ข้อมูลที่คุณต้องการอาจอยู่ในเว็บไซต์ www.prphuketvc.ac.th ค่ะ/ครับ";
+    }
+    // --- Gemini API Fallback for general queries (runs if no specific, admin, or website rule matched) ---
+    else {
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3-pro-preview", // Using the specified model for general chat
+          contents: { parts: [{ text: userMessage }] },
+          config: {
+            systemInstruction: "คุณคือนนท์นี่ เจ้าหน้าที่แชทบอทอัจฉริยะและ Database & Training Manager ประจำวิทยาลัยอาชีวศึกษาภูเก็ต. คุณสุภาพ เป็นกันเอง มีความเป็นมืออาชีพ และทำงานบนความถูกต้องของข้อมูล 100%. ตอบคำถามเพียง 1 ประโยคเท่านั้น ห้ามขยายความหรืออธิบายยาวเด็ดขาด.",
+            maxOutputTokens: 50, // Enforce brevity
+            thinkingConfig: { thinkingBudget: 25 }, // Reserve tokens for thinking
+          },
+        });
+        let geminiRawResponse = response.text;
+
+        // Post-process Gemini's response to ensure it's a single sentence and not empty.
+        if (geminiRawResponse) {
+          const sentences = geminiRawResponse.split(/[.!?]\s*/);
+          botResponse = sentences[0].trim();
+          // Add back a period if multiple sentences were split and the first part is non-empty.
+          if (sentences.length > 1 && botResponse.length > 0 && botResponse.length < (geminiRawResponse.length || 0)) {
+            botResponse += ".";
+          }
+        }
+      } catch (error) {
+        console.error('Error calling Gemini API:', error);
+        botResponse = `ขออภัย เกิดข้อผิดพลาดทางเทคนิค. กรุณาติดต่อ ${NONNY_NAME} อีกครั้งภายหลัง.`;
+      }
     }
   }
+
+  // Final fallback if botResponse is still not set (e.g., Gemini returns nothing)
+  if (!botResponse || botResponse.length === 0) {
+    botResponse = "กรุณาติดต่อหน้าเคาน์เตอร์งานทะเบียน อาคารปฏิพัทธ์ ชั้น 1.";
+  }
+
 
   return {
     response: botResponse,
     suggestions: getRandomSuggestions(),
-    admin_action: defaultAdminAction,
+    admin_action: finalAdminAction,
   };
 };

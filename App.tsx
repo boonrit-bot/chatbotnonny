@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ChatMessage, NonnyResponse } from './types';
 import { getNonnyResponse, getRandomSuggestions } from './services/nonnyService';
 import { NONNY_NAME } from './constants';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { decode, decodeAudioData, createAudioBlob } from './services/audioUtils';
 
 const App: React.FC = () => {
@@ -13,7 +13,7 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Live API specific states and refs
-  const liveSessionPromise = useRef<Promise<LiveSession> | null>(null);
+  const liveSessionPromise = useRef<Promise<any> | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -26,6 +26,18 @@ const App: React.FC = () => {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    // Initial greeting and suggestions when the component mounts
+    const initialGreeting: ChatMessage = {
+      id: 'initial-greeting',
+      text: `สวัสดีค่ะ/ครับ นนท์นี่มีอะไรให้ช่วยไหมคะ/ครับ สนใจสอบถามประเด็นไหนครับ`,
+      sender: 'bot',
+      suggestions: ["สมัครเรียน", "การลงทะเบียน", "เอกสารหลักฐาน", "ค่าใช้จ่าย"],
+      timestamp: new Date(),
+    };
+    setMessages([initialGreeting]);
+  }, []); // Empty dependency array ensures this runs only once on mount
 
   useEffect(() => {
     scrollToBottom();
