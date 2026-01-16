@@ -1,5 +1,7 @@
 {
   "name": "Nonny Chatbot",
   "description": "A sophisticated chatbot for Phuket Vocational College, acting as a smart assistant and data manager.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
